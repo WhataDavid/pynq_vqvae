@@ -1,0 +1,101 @@
+# =========================================================
+
+# Vitis Linker Configuration: DPU (300MHz) + VQ_Accel (100MHz)
+
+# Target Platform: Xilinx ZCU111
+
+# =========================================================
+
+
+
+[clock]
+
+# --- DPU 时钟配置 (维持 300MHz/600MHz 高性能) ---
+
+freqHz=200000000:DPUCZDX8G_1.aclk
+
+freqHz=400000000:DPUCZDX8G_1.ap_clk_2
+
+#freqHz=300000000:DPUCZDX8G_2.aclk
+
+#freqHz=600000000:DPUCZDX8G_2.ap_clk_2
+
+
+
+# --- VQ_Accel 时钟配置 ---
+
+# 由于 HLS 综合报告 Fmax 约为 136MHz，我们将其设定为稳健的 100MHz
+
+# 这样可以确保 Vivado 布局布线 100% 满足时序要求，避免运行崩溃
+
+freqHz=125000000:vq_accel_1.ap_clk
+
+
+
+[connectivity]
+
+# --- 内核实例化 ---
+
+# 实例化 2 个 DPU (用于跑 Encoder 和 Decoder)
+
+#nk=DPUCZDX8G:2:DPUCZDX8G_1.DPUCZDX8G_2
+
+nk=DPUCZDX8G:1:DPUCZDX8G_1
+
+# 实例化 1 个 VQ 加速器 (V23 修正版)
+
+nk=vq_accel:1:vq_accel_1
+
+
+
+# --- DPU 1 接口连接 (HPC0 + HP0/HP1) ---
+
+sp=DPUCZDX8G_1.M_AXI_GP0:HPC0
+
+sp=DPUCZDX8G_1.M_AXI_HP0:HPC1
+
+sp=DPUCZDX8G_1.M_AXI_HP2:HP3
+
+
+
+# --- DPU 2 接口连接 (HPC0 + HP2/HP3) ---
+
+#sp=DPUCZDX8G_2.M_AXI_GP0:HPC0
+
+#sp=DPUCZDX8G_2.M_AXI_HP0:HP2
+
+#sp=DPUCZDX8G_2.M_AXI_HP2:HP3
+
+
+
+# --- VQ_Accel 接口连接 ---
+
+# gmem0: 处理 500x700 图像特征向量 (in_z, out_z_q)，挂载到 HPC1 (缓存一致性)
+
+sp=vq_accel_1.m_axi_gmem0:HP0
+
+# gmem1: 读取 512x64 Codebook，挂载到 HP0
+
+sp=vq_accel_1.m_axi_gmem1:HP1
+
+# gmem2: 输出向量 out_z_q，挂载到 HPC1 (与输入共享端口，方便内存搬运)
+
+sp=vq_accel_1.m_axi_gmem2:HP2
+
+[advanced]
+
+# 指定链接工程名
+
+misc=:solution_name=link
+
+#param=compiler.skipTimingCheckAndFrequencyScaling=1
+
+param=compiler.multiThread=4
+
+[vivado]
+
+# 使用性能探索策略，帮助在 ZCU111 上更好地进行资源布局
+
+prop=run.impl_1.strategy=Performance_Explore
+
+#prop=run.impl_1.strategy=Congestion_SpreadLogic_medium
