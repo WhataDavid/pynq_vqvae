@@ -12,9 +12,9 @@
 
 # --- DPU 时钟配置 (维持 300MHz/600MHz 高性能) ---
 
-freqHz=300000000:DPUCZDX8G_1.aclk
+freqHz=200000000:DPUCZDX8G_1.aclk
 
-freqHz=600000000:DPUCZDX8G_1.ap_clk_2
+freqHz=400000000:DPUCZDX8G_1.ap_clk_2
 
 #freqHz=300000000:DPUCZDX8G_2.aclk
 
