@@ -48,7 +48,7 @@ nk=vq_accel:1:vq_accel_1
 
 
 
-# --- DPU 1 接口连接 (HPC0 + HP0/HP1) ---
+# --- DPU 1 接口连接 (HPC0 控制 + HP3 数据) ---
 
 sp=DPUCZDX8G_1.M_AXI_GP0:HPC0
 
@@ -70,15 +70,15 @@ sp=DPUCZDX8G_1.M_AXI_HP2:HP3
 
 # --- VQ_Accel 接口连接 ---
 
-# gmem0: 处理 500x700 图像特征向量 (in_z, out_z_q)，挂载到 HPC1 (缓存一致性)
+# gmem0: 处理 500x700 图像特征向量 (in_z, out_z_q)，挂载到 HP3 (统一使用 HP3 减少拥堵)
 
 sp=vq_accel_1.m_axi_gmem0:HP3
 
-# gmem1: 读取 512x64 Codebook，挂载到 HP0
+# gmem1: 读取 512x64 Codebook，挂载到 HP3
 
 sp=vq_accel_1.m_axi_gmem1:HP3
 
-# gmem2: 输出向量 out_z_q，挂载到 HPC1 (与输入共享端口，方便内存搬运)
+# gmem2: 输出向量 out_z_q，挂载到 HP3 (与 gmem0/gmem1 共享 HP3，降低布线拥堵)
 
 sp=vq_accel_1.m_axi_gmem2:HP3
 
