@@ -52,7 +52,7 @@ nk=vq_accel:1:vq_accel_1
 
 sp=DPUCZDX8G_1.M_AXI_GP0:HPC0
 
-sp=DPUCZDX8G_1.M_AXI_HP0:HPC1
+sp=DPUCZDX8G_1.M_AXI_HP0:HP3
 
 sp=DPUCZDX8G_1.M_AXI_HP2:HP3
 
@@ -72,15 +72,15 @@ sp=DPUCZDX8G_1.M_AXI_HP2:HP3
 
 # gmem0: 处理 500x700 图像特征向量 (in_z, out_z_q)，挂载到 HPC1 (缓存一致性)
 
-sp=vq_accel_1.m_axi_gmem0:HP0
+sp=vq_accel_1.m_axi_gmem0:HP3
 
 # gmem1: 读取 512x64 Codebook，挂载到 HP0
 
-sp=vq_accel_1.m_axi_gmem1:HP1
+sp=vq_accel_1.m_axi_gmem1:HP3
 
 # gmem2: 输出向量 out_z_q，挂载到 HPC1 (与输入共享端口，方便内存搬运)
 
-sp=vq_accel_1.m_axi_gmem2:HP2
+sp=vq_accel_1.m_axi_gmem2:HP3
 
 [advanced]
 
@@ -96,6 +96,6 @@ param=compiler.multiThread=4
 
 # 使用性能探索策略，帮助在 ZCU111 上更好地进行资源布局
 
-prop=run.impl_1.strategy=Performance_Explore
+prop=run.impl_1.strategy=Congestion_SpreadLogic_medium
 
-#prop=run.impl_1.strategy=Congestion_SpreadLogic_medium
+#prop=run.impl_1.strategy=Performance_Explore
