@@ -1,19 +1,41 @@
-import os, sys, time, threading, queue, struct
+import os, sys, time, threading, queue, struct, shutil
 import numpy as np
 import cv2
+
+# --- 1. 环境初始化 (关键补丁) ---
+WORK_DIR = '/home/root/pynq_vqvae'
+sys.path.insert(0, '/home/root') # 确保加载带 patch 的 pynq
+sys.path.insert(0, '/home/root/DPU-PYNQ')
+
+# 在 import pynq 之前设置
+os.environ['XILINX_XRT'] = '/usr'
+
+import pynq
 from pynq import allocate
-
-# --- 1. 环境初始化 ---
-WORK_DIR = '/home/xilinx/jupyter_notebooks/duxu/pynq_vqvae'
-sys.path.append('/usr/lib/python3/site-packages')
-sys.path.insert(0, '/home/xilinx/jupyter_notebooks/soft/DPU-PYNQ')
-
 from pynq_dpu import DpuOverlay
 import vart, xir
 
-print("loading bitstream")
-overlay = DpuOverlay(os.path.join(WORK_DIR, 'pl_vq_zcu102/dpu.bit'))
-print("loading complete")
+# 定义路径
+XCLBIN_ORIGIN = '/home/root/pynq_vqvae/pl_vq_zcu103/dpu.xclbin'
+XCLBIN_DST = '/usr/lib/dpu.xclbin'
+
+def setup_dpu_environment():
+    print(" [System] Programming FPGA...")
+    os.system(f"xbutil program -d 0 -u {XCLBIN_ORIGIN}")
+    
+    print(" [System] Configuring VART environment...")
+    shutil.copy2(XCLBIN_ORIGIN, XCLBIN_DST)
+    with open('/etc/vart.conf', 'w') as f:
+        f.write(f'firmware: {XCLBIN_DST}')
+    os.environ['XLNX_VART_FIRMWARE'] = XCLBIN_DST
+
+setup_dpu_environment()
+
+print("loading bitstream overlay")
+#overlay = DpuOverlay(os.path.join(WORK_DIR, 'pl_vq_zcu103/dpu.bit'))
+# 实例化（跳过 PYNQ 自动下载导致的 KeyError 陷阱）
+overlay = DpuOverlay('/home/root/pynq_vqvae/pl_vq_zcu103/dpu.bit', download=False)
+print("loading complete overlay")
 vq_ip = overlay.vq_accel_1
 
 enc_out_scale = 0.015625 
@@ -45,7 +67,7 @@ enc_runner = vart.Runner.create_runner(enc_subgraph, "run")
 dec_graph, dec_subgraph = get_dpu_subgraph(os.path.join(WORK_DIR, 'xmodel/decoder_zcu111_700x500_old.xmodel'))
 dec_runner = vart.Runner.create_runner(dec_subgraph, "run")
 
-PRE_DIR = '/home/xilinx/jupyter_notebooks/duxu/pynq_vqvae/imgs_preprocessed'
+PRE_DIR = '/home/root/pynq_vqvae/imgs_preprocessed'
 data_files = sorted([f for f in os.listdir(PRE_DIR) if f.endswith('.npy')])
 num_imgs = len(data_files)
 
