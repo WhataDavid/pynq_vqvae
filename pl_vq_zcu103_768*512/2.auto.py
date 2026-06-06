@@ -43,6 +43,9 @@ REG_OUT_ADDR_H     = 0x2C   # out_z_q_2
 REG_ENC_SCALE      = 0x34   # enc_scale
 REG_DEC_SCALE_INV  = 0x3C   # dec_scale_inv
 
+# 关键：参照你给的稳定版本，启动用 0x11
+VQ_START_CMD       = 0x11
+
 # -----------------------------
 # 环境导入
 # -----------------------------
@@ -152,6 +155,64 @@ def print_tensor_info(prefix, tensor):
         pass
 
 
+def run_vq_once(vq_ip, vq_in, vq_out, cb_buf):
+    """
+    按你给出的稳定版本风格执行一次 VQ：
+      - sync input/output
+      - 重写地址
+      - AP_CTRL 写 0x11 启动
+      - 轮询 AP_DONE
+      - sync output back
+    """
+    # 清零输出，避免 IP 未完整覆盖时留下旧值
+    vq_out.fill(0)
+
+    # 同步输入/输出到 device
+    vq_in.sync_to_device()
+    vq_out.sync_to_device()
+
+    # 为稳妥起见，每次都重写固定寄存器
+    vq_ip.mmio.write(REG_CODEBOOK_L, cb_buf.device_address & 0xFFFFFFFF)
+    vq_ip.mmio.write(REG_CODEBOOK_H, (cb_buf.device_address >> 32) & 0xFFFFFFFF)
+    vq_ip.mmio.write(REG_ENC_SCALE, f32_to_u32(ENC_OUT_SCALE))
+    vq_ip.mmio.write(REG_DEC_SCALE_INV, f32_to_u32(1.0 / DEC_IN_SCALE))
+
+    # 重写本次输入输出地址
+    vq_ip.mmio.write(REG_IN_ADDR_L,  vq_in.device_address & 0xFFFFFFFF)
+    vq_ip.mmio.write(REG_IN_ADDR_H,  (vq_in.device_address >> 32) & 0xFFFFFFFF)
+    vq_ip.mmio.write(REG_OUT_ADDR_L, vq_out.device_address & 0xFFFFFFFF)
+    vq_ip.mmio.write(REG_OUT_ADDR_H, (vq_out.device_address >> 32) & 0xFFFFFFFF)
+
+    print(
+        f"VQ addr in =0x{vq_in.device_address:016x}, "
+        f"out=0x{vq_out.device_address:016x}",
+        flush=True
+    )
+
+    ctrl_before = vq_ip.mmio.read(REG_AP_CTRL)
+    print(f"VQ CTRL before start = 0x{ctrl_before:08x}", flush=True)
+
+    # 关键：参照你给的版本，用 0x11 启动
+    vq_ip.mmio.write(REG_AP_CTRL, VQ_START_CMD)
+
+    print(f"⏳ VQ: start IP with 0x{VQ_START_CMD:02x}", flush=True)
+    print("⏳ VQ: polling AP_DONE", flush=True)
+
+    t0 = time.time()
+    while True:
+        ctrl = vq_ip.mmio.read(REG_AP_CTRL)
+        if ctrl & 0x02:  # AP_DONE
+            break
+        if time.time() - t0 > 3.0:
+            raise RuntimeError(f"VQ timeout, CTRL=0x{ctrl:08x}")
+        time.sleep(0.001)
+
+    print(f"✅ VQ done, CTRL=0x{ctrl:08x}", flush=True)
+
+    # 输出同步回 CPU
+    vq_out.sync_from_device()
+
+
 def run():
     print("⏳ 连接 overlay...", flush=True)
     overlay = DpuOverlay(BIT_PATH, download=False)
@@ -255,7 +316,7 @@ def run():
     print(f"cb_buf addr = 0x{cb_buf.device_address:016x}", flush=True)
 
     # -----------------------------
-    # 配置 VQ 固定寄存器
+    # 初始固定寄存器配置
     # -----------------------------
     print("⏳ configure VQ IP registers...", flush=True)
     vq_ip.mmio.write(REG_CODEBOOK_L, cb_buf.device_address & 0xFFFFFFFF)
@@ -327,41 +388,9 @@ def run():
 
         print("⏳ VQ: copy to input buffer", flush=True)
         np.copyto(vq_in, src_flat)
-        vq_out.fill(0)
 
-        print("⏳ VQ: sync input to device", flush=True)
-        vq_in.sync_to_device()
-
-        print("⏳ VQ: write in/out addresses", flush=True)
-        vq_ip.mmio.write(REG_IN_ADDR_L,  vq_in.device_address & 0xFFFFFFFF)
-        vq_ip.mmio.write(REG_IN_ADDR_H,  (vq_in.device_address >> 32) & 0xFFFFFFFF)
-        vq_ip.mmio.write(REG_OUT_ADDR_L, vq_out.device_address & 0xFFFFFFFF)
-        vq_ip.mmio.write(REG_OUT_ADDR_H, (vq_out.device_address >> 32) & 0xFFFFFFFF)
-
-        print(
-            f"VQ addr in =0x{vq_in.device_address:016x}, "
-            f"out=0x{vq_out.device_address:016x}",
-            flush=True
-        )
-
-        print("⏳ VQ: start IP", flush=True)
-        vq_ip.mmio.write(REG_AP_CTRL, 0x01)
-
-        print("⏳ VQ: polling AP_DONE", flush=True)
-        t0 = time.time()
-        while True:
-            ctrl = vq_ip.mmio.read(REG_AP_CTRL)
-            if ctrl & 0x02:  # AP_DONE
-                break
-            if time.time() - t0 > 3.0:
-                raise RuntimeError(f"VQ timeout, CTRL=0x{ctrl:08x}")
-            time.sleep(0.0005)
-
-        print(f"✅ VQ done, CTRL=0x{ctrl:08x}", flush=True)
-
-        print("⏳ VQ: sync output from device", flush=True)
-        vq_out.sync_from_device()
-        print("✅ VQ output synced", flush=True)
+        print("⏳ VQ: run once", flush=True)
+        run_vq_once(vq_ip, vq_in, vq_out, cb_buf)
 
         zq_flat = np.array(vq_out, copy=True)
         print_arr_info("vq_out(flat)", zq_flat)
