@@ -1,208 +1,172 @@
-import os, sys, time, threading, queue, struct
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+import sys
+import time
+import struct
 import numpy as np
 import cv2
 from pynq import allocate
 
+# -----------------------------
+# 配置
+# -----------------------------
 WORK_DIR = '/home/xilinx/jupyter_notebooks/duxu/pynq_vqvae'
+PRE_DIR  = '/home/xilinx/jupyter_notebooks/duxu/pynq_vqvae/imgs_preprocessed'
+RES_DIR  = os.path.join(WORK_DIR, 'results')
+os.makedirs(RES_DIR, exist_ok=True)
+
+BIT_PATH       = os.path.join(WORK_DIR, 'pl_vq_parallel_260513/dpu.bit')
+ENC_XMODEL     = os.path.join(WORK_DIR, 'xmodel/encoder_768x512.xmodel')
+DEC_XMODEL     = os.path.join(WORK_DIR, 'xmodel/decoder_768x512.xmodel')
+CODEBOOK_PATH  = os.path.join(WORK_DIR, 'codebook.npy')
+
+ENC_OUT_SCALE  = 0.015625
+DEC_IN_SCALE   = 0.03125
+DEC_OUT_SCALE  = 0.007812
+
+# VQ 控制寄存器（你之前已验证可用）
+REG_AP_CTRL      = 0x00
+REG_IN_ADDR_L    = 0x10
+REG_IN_ADDR_H    = 0x14
+REG_OUT_ADDR_L   = 0x28
+REG_OUT_ADDR_H   = 0x2C
+
+# 可选参数寄存器（如果你的 HLS 顶层有这些端口，就启用；否则保持 False）
+USE_RUNTIME_SHAPE_REG = False
+REG_NUM_VECTORS = 0x30
+REG_DIM         = 0x34
+
+# -----------------------------
+# 环境导入
+# -----------------------------
 sys.path.append('/usr/lib/python3/site-packages')
 sys.path.insert(0, '/home/xilinx/jupyter_notebooks/soft/DPU-PYNQ')
-
 from pynq_dpu import DpuOverlay
-import vart, xir
+import vart
+import xir
 
-# ✅ 关键改动：download=False，跳过烧写，直接连接已加载的 overlay
-overlay = DpuOverlay(
-    os.path.join(WORK_DIR, 'pl_vq_parallel_260513/dpu.bit'),
-    download=False   # <--- 唯一改动
-)
-vq_ip = overlay.vq_accel_1
-print("✅ 已连接到 FPGA，无需重新加载 bit")
+def f32_to_u32(v):
+    return struct.unpack('<I', struct.pack('<f', float(v)))[0]
 
-# --- 后续代码完全不变 ---
-enc_out_scale = 0.015625
-dec_in_scale  = 0.03125
-dec_out_scale = 0.007812
-num_vectors = 125 * 175
-dim = 64
+def get_subgraph(xmodel_path):
+    g = xir.Graph.deserialize(xmodel_path)
+    return g.get_root_subgraph().toposort_child_subgraph()[1]
 
-# --- 2. 极致性能配置 ---
-num_bufs = 3
-vq_in_bufs = [allocate(shape=(num_vectors, dim), dtype=np.int8, cacheable=1) for _ in range(num_bufs)]
-vq_out_bufs = [allocate(shape=(num_vectors, dim), dtype=np.int8, cacheable=1) for _ in range(num_bufs)]
+def to_hwc(arr):
+    a = arr[0] if arr.ndim == 4 else arr
+    if a.shape[-1] in (1, 3):
+        return a
+    if a.shape[0] in (1, 3):
+        return np.transpose(a, (1, 2, 0))
+    raise RuntimeError(f"Bad tensor shape: {arr.shape}")
 
-vq_in_cb = allocate(shape=(512, 64), dtype=np.float32, cacheable=1)
-vq_in_cb[:] = np.load(os.path.join(WORK_DIR, 'codebook.npy')).astype(np.float32)
-vq_in_cb.sync_to_device() 
+def postprocess_int8_to_u8(dec_out_int8):
+    img = to_hwc(dec_out_int8).astype(np.float32)
+    img = img * DEC_OUT_SCALE
+    img = np.clip(img * 0.5 + 0.5, 0.0, 1.0)
+    return (img * 255.0 + 0.5).astype(np.uint8)
 
-vq_ip.register_map.in_codebook_1 = vq_in_cb.device_address & 0xFFFFFFFF
-vq_ip.register_map.in_codebook_2 = vq_in_cb.device_address >> 32
-vq_ip.register_map.enc_scale = struct.unpack('<I', struct.pack('<f', enc_out_scale))[0]
-vq_ip.register_map.dec_scale_inv = struct.unpack('<I', struct.pack('<f', 1.0 / dec_in_scale))[0]
+def save_rgb(path, rgb):
+    cv2.imwrite(path, cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
 
-def get_dpu_subgraph(path):
-    graph = xir.Graph.deserialize(path)
-    return graph, graph.get_root_subgraph().toposort_child_subgraph()[1] 
+def run():
+    print("⏳ 连接 overlay...")
+    overlay = DpuOverlay(BIT_PATH, download=False)
+    vq_ip = overlay.vq_accel_1
+    print("✅ overlay connected")
 
-enc_graph, enc_subgraph = get_dpu_subgraph(os.path.join(WORK_DIR, 'xmodel/encoder_zcu111_700x500_old.xmodel'))
-enc_runner = vart.Runner.create_runner(enc_subgraph, "run")
-dec_graph, dec_subgraph = get_dpu_subgraph(os.path.join(WORK_DIR, 'xmodel/decoder_zcu111_700x500_old.xmodel'))
-dec_runner = vart.Runner.create_runner(dec_subgraph, "run")
+    enc_runner = vart.Runner.create_runner(get_subgraph(ENC_XMODEL), "run")
+    dec_runner = vart.Runner.create_runner(get_subgraph(DEC_XMODEL), "run")
 
-PRE_DIR = '/home/xilinx/jupyter_notebooks/duxu/pynq_vqvae/imgs_preprocessed'
-data_files = sorted([f for f in os.listdir(PRE_DIR) if f.endswith('.npy')])
-num_imgs = len(data_files)
+    enc_in_shape  = tuple(enc_runner.get_input_tensors()[0].dims)
+    enc_out_shape = tuple(enc_runner.get_output_tensors()[0].dims)
+    dec_in_shape  = tuple(dec_runner.get_input_tensors()[0].dims)
+    dec_out_shape = tuple(dec_runner.get_output_tensors()[0].dims)
 
-RES_DIR = './results'
-if not os.path.exists(RES_DIR): os.makedirs(RES_DIR)
+    print("ENC input :", enc_in_shape)
+    print("ENC output:", enc_out_shape)
+    print("DEC input :", dec_in_shape)
+    print("DEC output:", dec_out_shape)
 
-# --- 预计算 Decoder 输出的 LUT ---
-post_lut = np.zeros(256, dtype=np.uint8)
-for i in range(256):
-    val_int8 = np.int8(i) 
-    val_fp32 = float(val_int8) * dec_out_scale 
-    val_norm = max(0.0, min(1.0, val_fp32 * 0.5 + 0.5)) 
-    post_lut[i] = int(val_norm * 255.0)
+    assert enc_out_shape == dec_in_shape, "Encoder output / Decoder input mismatch"
+    assert len(enc_out_shape) == 4, f"Unexpected latent shape: {enc_out_shape}"
 
-# ==============================================================================
-# ==================== Phase 1: 读取 I/O + Encoder + VQ ====================
-# ==============================================================================
-read_queue = queue.Queue(maxsize=3)
-free_queue = queue.Queue(maxsize=num_bufs)
-enc_res_queue = queue.Queue(maxsize=num_bufs)
-for i in range(num_bufs):
-    free_queue.put(i)
+    # 按你当前 xmodel：NHWC
+    _, h_lat, w_lat, c_lat = enc_out_shape
+    num_vectors = h_lat * w_lat
+    dim = c_lat
+    print(f"latent: H={h_lat}, W={w_lat}, C={c_lat}, num_vectors={num_vectors}")
 
-all_zq_results = []
+    # 分配 VQ buffer
+    vq_in  = allocate(shape=(num_vectors, dim), dtype=np.int8, cacheable=1)
+    vq_out = allocate(shape=(num_vectors, dim), dtype=np.int8, cacheable=1)
 
-def read_worker():
-    for f in data_files:
-        data = np.load(os.path.join(PRE_DIR, f))
-        read_queue.put(data)
-    read_queue.put(None)
+    # codebook
+    codebook = np.load(CODEBOOK_PATH).astype(np.float32)
+    assert codebook.shape[1] == dim, f"codebook dim mismatch: {codebook.shape}, dim={dim}"
 
-def enc_worker():
-    while True:
-        input_data = read_queue.get()
-        if input_data is None:
-            enc_res_queue.put(None)
-            break
-            
-        in_buf = [np.ascontiguousarray(input_data[np.newaxis])]
-        
-        buf_idx = free_queue.get() 
-        target_vq_buf = vq_in_bufs[buf_idx]
-        out_buf = [np.ndarray((1, 125, 175, 64), dtype=np.int8, buffer=target_vq_buf.data)]
-        
-        job_id = enc_runner.execute_async(in_buf, out_buf)
-        enc_runner.wait(job_id)
-        
-        enc_res_queue.put(buf_idx)
+    cb_buf = allocate(shape=codebook.shape, dtype=np.float32, cacheable=1)
+    cb_buf[:] = codebook
+    cb_buf.sync_to_device()
 
-def phase1_pipeline():
-    print(f"🚀 [Phase 1] Starting Read -> Encoder -> VQ Pipeline: {num_imgs} images")
-    t_read = threading.Thread(target=read_worker)
-    t_enc = threading.Thread(target=enc_worker)
-    
-    start_time = time.time()
-    t_read.start()
-    t_enc.start()
+    # 仅写已知存在字段（避免 register_map 乱探测导致崩溃）
+    vq_ip.register_map.in_codebook_1 = cb_buf.device_address & 0xFFFFFFFF
+    vq_ip.register_map.in_codebook_2 = cb_buf.device_address >> 32
+    vq_ip.register_map.enc_scale     = f32_to_u32(ENC_OUT_SCALE)
+    vq_ip.register_map.dec_scale_inv = f32_to_u32(1.0 / DEC_IN_SCALE)
 
-    while True:
-        buf_idx = enc_res_queue.get()
-        if buf_idx is None: 
-            break
-            
-        curr_in_buf = vq_in_bufs[buf_idx]
-        curr_out_buf = vq_out_bufs[buf_idx]
-        
-        curr_in_buf.sync_to_device()  
-        
-        vq_ip.mmio.write(0x10, curr_in_buf.device_address & 0xFFFFFFFF)
-        vq_ip.mmio.write(0x14, curr_in_buf.device_address >> 32)
-        vq_ip.mmio.write(0x28, curr_out_buf.device_address & 0xFFFFFFFF)
-        vq_ip.mmio.write(0x2C, curr_out_buf.device_address >> 32)
-        
-        vq_ip.mmio.write(0x00, 0x11) 
-        while (vq_ip.mmio.read(0x00) & 0x02) == 0:
-            time.sleep(0.001) 
-            
-        curr_out_buf.sync_from_device() 
-        
-        zq_snapshot = np.array(curr_out_buf, copy=True)
-        all_zq_results.append(zq_snapshot)
-        
-        free_queue.put(buf_idx)
-        
-    t_read.join()
-    t_enc.join()
-    phase1_time = time.time() - start_time
-    print(f"✅ [Phase 1] Finished! Includes NPY Reading. Time: {phase1_time*1000:.2f} ms | FPS: {num_imgs/phase1_time:.2f}\n")
+    files = sorted([f for f in os.listdir(PRE_DIR) if f.endswith('.npy')])
+    print(f"📦 images: {len(files)}")
 
+    for i, fn in enumerate(files):
+        x = np.load(os.path.join(PRE_DIR, fn))  # HWC int8, shape (512,768,3)
 
-# ==============================================================================
-# ==================== Phase 2: Decoder + LUT (完全去写盘I/O) ================
-# ==============================================================================
-dec_out_queue = queue.Queue(maxsize=3)
-all_recon_imgs = []
+        # 1) Encoder
+        enc_out = np.empty(enc_out_shape, dtype=np.int8, order='C')
+        jid = enc_runner.execute_async([np.ascontiguousarray(x[np.newaxis], dtype=np.int8)], [enc_out])
+        enc_runner.wait(jid)
 
-def dec_worker():
-    for zq_res in all_zq_results:
-        z_q_int8 = zq_res.reshape(1, 125, 175, 64)
-        dec_in_buf = [z_q_int8]
-        # 必须给每一帧分配独立空间，防止被并行处理的 LUT 线程覆盖
-        dec_out_buf = [np.empty((1, 500, 700, 3), dtype=np.int8, order='C')]
-        
-        job_id = dec_runner.execute_async(dec_in_buf, dec_out_buf)
-        dec_runner.wait(job_id)
-        
-        dec_out_queue.put(dec_out_buf[0])
-        
-    dec_out_queue.put(None)
+        # 2) VQ
+        src_flat = enc_out.reshape(num_vectors, dim)
+        np.copyto(vq_in, src_flat)
+        vq_out.fill(0)
 
-def lut_worker():
-    while True:
-        dec_data = dec_out_queue.get()
-        if dec_data is None:
-            break
-        
-        # 极速后处理，并将结果存入内存列表
-        recon_img = post_lut[dec_data[0].view(np.uint8)]
-        all_recon_imgs.append(recon_img)
+        vq_in.sync_to_device()
 
-def phase2_pipeline():
-    print(f"🚀 [Phase 2] Starting Decoder -> LUT Pipeline: {num_imgs} images")
-    t_dec = threading.Thread(target=dec_worker)
-    t_lut = threading.Thread(target=lut_worker)
-    
-    start_time = time.time()
-    t_dec.start()
-    t_lut.start()
+        vq_ip.mmio.write(REG_IN_ADDR_L,  vq_in.device_address & 0xFFFFFFFF)
+        vq_ip.mmio.write(REG_IN_ADDR_H,  vq_in.device_address >> 32)
+        vq_ip.mmio.write(REG_OUT_ADDR_L, vq_out.device_address & 0xFFFFFFFF)
+        vq_ip.mmio.write(REG_OUT_ADDR_H, vq_out.device_address >> 32)
 
-    t_dec.join()
-    t_lut.join()
-    
-    phase2_time = time.time() - start_time
-    print(f"✅ [Phase 2] Finished! (Excludes Image Saving). Time: {phase2_time*1000:.2f} ms | FPS: {num_imgs/phase2_time:.2f}\n")
+        if USE_RUNTIME_SHAPE_REG:
+            vq_ip.mmio.write(REG_NUM_VECTORS, int(num_vectors))
+            vq_ip.mmio.write(REG_DIM, int(dim))
 
+        vq_ip.mmio.write(REG_AP_CTRL, 0x11)
+        while (vq_ip.mmio.read(REG_AP_CTRL) & 0x02) == 0:
+            time.sleep(0.0005)
 
-# ==============================================================================
-# ==================== 主控与收尾 ====================
-# ==============================================================================
-if __name__ == "__main__":
-    # 执行包含 Read 的 Phase 1
-    phase1_pipeline()
-    
-    # 执行 Decoder + LUT 并行的 Phase 2
-    phase2_pipeline()
-    
-    # 释放 Runner
+        vq_out.sync_from_device()
+        zq = np.array(vq_out, copy=True).reshape(dec_in_shape)
+
+        # 3) Decoder
+        dec_out = np.empty(dec_out_shape, dtype=np.int8, order='C')
+        jid = dec_runner.execute_async([np.ascontiguousarray(zq, dtype=np.int8)], [dec_out])
+        dec_runner.wait(jid)
+
+        # 4) 保存
+        img = postprocess_int8_to_u8(dec_out)
+        save_rgb(os.path.join(RES_DIR, f"recon_{i}.png"), img)
+
+        if i < 3:
+            arr = np.array(vq_out, copy=False)
+            print(f"[VQ stat {i}] min={arr.min()} max={arr.max()} mean={arr.mean():.3f} nz={np.count_nonzero(arr)}")
+
     del enc_runner
     del dec_runner
-    print("🧹 DPU Runners released.")
-    
-    # 统一单线程写盘
-    print("🖼️ 正在写入最终图片...")
-    for i, img in enumerate(all_recon_imgs):
-        cv2.imwrite(f'{RES_DIR}/recon_{i}.png', cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        
-    print(f"✅ Pipeline perfectly completed. Saved {len(all_recon_imgs)} images.")
+    print("✅ done:", RES_DIR)
+
+if __name__ == "__main__":
+    run()
