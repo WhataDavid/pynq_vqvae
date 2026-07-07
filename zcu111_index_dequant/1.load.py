@@ -5,7 +5,7 @@ import os
 import sys
 
 WORK_DIR = '/home/xilinx/jupyter_notebooks/duxu/pynq_vqvae'
-BIT_PATH = os.path.join(WORK_DIR, 'zcu111_index_dequant/dpu.bit')
+BIT_PATH = os.path.join(WORK_DIR, 'zcu111_index_dequant/dpu_debug.bit')
 
 sys.path.append('/usr/lib/python3/site-packages')
 sys.path.insert(0, '/home/xilinx/jupyter_notebooks/soft/DPU-PYNQ')
