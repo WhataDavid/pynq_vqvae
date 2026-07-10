@@ -15,9 +15,10 @@ from pynq import allocate
 WORK_DIR = '/home/xilinx/jupyter_notebooks/duxu/pynq_vqvae'
 PL_DIR = os.path.join(WORK_DIR, 'zcu111_index_dequant')
 PRE_DIR = '/home/xilinx/jupyter_notebooks/duxu/pynq_vqvae/imgs_preprocessed'
-CODEBOOK_PATH = os.path.join(WORK_DIR, 'codebook.npy')
-ENC_XMODEL = os.path.join(WORK_DIR, 'xmodel/encoder_768x512.xmodel')
-DEC_XMODEL = os.path.join(WORK_DIR, 'xmodel/decoder_768x512.xmodel')
+CODEBOOK_PATH = os.path.join(WORK_DIR, 'codebook_som.npy')
+ENC_XMODEL = os.path.join(WORK_DIR, 'xmodel/encoder_768x512_som.xmodel')
+DEC_XMODEL = os.path.join(WORK_DIR, 'xmodel/decoder_768x512_som.xmodel')
+# DEC_XMODEL = os.path.join(WORK_DIR, 'xmodel/decoder_zcu111_upsample.xmodel')
 BIT_PATH = os.path.join(PL_DIR, 'dpu_debug.bit')
 
 RES_DIR = './results_768x512'
@@ -37,7 +38,7 @@ if not os.path.exists(IDX_DIR):
 
 enc_out_scale = 0.015625
 dec_in_scale = 0.03125
-dec_out_scale = 0.007812
+dec_out_scale = 0.0078125
 dec_scale_inv = 1.0 / dec_in_scale
 
 num_vectors = 128 * 192

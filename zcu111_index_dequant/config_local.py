@@ -19,7 +19,7 @@ DEC_XMODEL = os.path.join(WORK_DIR, 'xmodel/decoder_768x512.xmodel')
 
 BIT_PATH = os.path.join(PL_DIR, 'dpu_debug.bit')
 
-RES_DIR = os.path.join(PL_DIR, 'results_768x512_serial')
+RES_DIR = os.path.join(PL_DIR, 'results_768x512_serial_cv2')
 IDX_DIR = os.path.join(RES_DIR, 'idx_bins')
 
 

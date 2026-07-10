@@ -37,7 +37,7 @@ vq_in_bufs = [allocate(shape=(num_vectors, dim), dtype=np.int8, cacheable=1) for
 vq_out_bufs = [allocate(shape=(num_vectors, dim), dtype=np.int8, cacheable=1) for _ in range(num_bufs)]
 
 vq_in_cb = allocate(shape=(512, 64), dtype=np.float32, cacheable=1)
-vq_in_cb[:] = np.load(os.path.join(WORK_DIR, 'codebook.npy')).astype(np.float32)
+vq_in_cb[:] = np.load(os.path.join(WORK_DIR, 'codebook_som.npy')).astype(np.float32)
 vq_in_cb.sync_to_device()
 
 # 保留你当前写法

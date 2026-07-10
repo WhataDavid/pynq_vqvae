@@ -32,7 +32,7 @@ PL_DIR = os.path.join(WORK_DIR, 'zcu111_1920x1080')
 BIT_PATH = os.path.join(PL_DIR, 'dpu.bit')
 
 PRE_DIR = os.path.join(WORK_DIR, 'imgs_preprocessed_1920x1080')
-CODEBOOK_PATH = os.path.join(WORK_DIR, 'codebook.npy')
+CODEBOOK_PATH = os.path.join(WORK_DIR, 'codebook_som.npy')
 ENC_XMODEL = os.path.join(WORK_DIR, 'xmodel/encoder_1920x1080.xmodel')
 
 RES_DIR = os.path.join(PL_DIR, 'results_1920x1080')
