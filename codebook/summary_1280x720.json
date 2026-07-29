@@ -1,0 +1,22 @@
+{
+  "img_h": 720,
+  "img_w": 1280,
+  "latent_h": 180,
+  "latent_w": 320,
+  "num_z": 57600,
+  "calib_num": 100,
+  "train_num": 100,
+  "min_count": 1,
+  "used_codes": 507,
+  "total_codes": 512,
+  "orig_match_mean_pct": 10.545555555555557,
+  "search_match_mean_pct": 38.15241319444445,
+  "orig_match_first_pct": 46.65972222222222,
+  "search_match_first_pct": 61.82986111111111,
+  "encoder_xmodel": "results/quant_som_cv2_realzq_1280x720/compiled_encoder_1280x720_som_cv2/encoder_zcu111.xmodel",
+  "decoder_xmodel": "results/quant_som_cv2_realzq_1280x720/compiled_decoder_1280x720_som_realzq/decoder_zcu111.xmodel",
+  "dequant_decoder_codebook": "results/quant_som_cv2_realzq_1280x720/codebook_som.npy",
+  "vq_search_codebook": "results/quant_som_cv2_realzq_1280x720/codebook_som_vq_1280x720.npy",
+  "report": "results/quant_som_cv2_realzq_1280x720/dpu_search_100/dpu_search_codebook_report.json",
+  "note": "Use vq_search_codebook only for VQ nearest-neighbor search; keep dequant_decoder_codebook for vq_dequant/decoder."
+}

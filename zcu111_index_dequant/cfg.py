@@ -40,7 +40,7 @@ PL_DIR = os.path.join(WORK_DIR, PL_SUBDIR)
 BIT_PATH = os.path.join(PL_DIR, 'dpu.bit')
 
 PRE_DIR = os.path.join(WORK_DIR, 'imgs_preprocessed')
-CODEBOOK_PATH = os.path.join(WORK_DIR, 'codebook_som.npy')
+CODEBOOK_PATH = os.path.join(WORK_DIR, 'codebook/codebook_som.npy')
 VQ_CODEBOOK_PATH = os.path.join(WORK_DIR, 'codebook_som_vq_768x512.npy')
 ENC_XMODEL = os.path.join(WORK_DIR, 'xmodel/encoder_768x512_som.xmodel')
 DEC_XMODEL = os.path.join(WORK_DIR, 'xmodel/decoder_768x512_som.xmodel')
